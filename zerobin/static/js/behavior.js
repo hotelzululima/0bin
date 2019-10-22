@@ -429,6 +429,11 @@
     upload: function (files) {
       var current_file = files[0];
       var reader = new FileReader();
+      var updateContentData = function(readerEvent) {
+        $('[data-generated-content]').remove();
+        $('#content').val(readerEvent.target.result).trigger('change');
+      }
+
       if (current_file.type.indexOf('image') == 0) {
         reader.onload = function (event) {
             var image = new Image();
@@ -462,17 +467,54 @@
               var ctx = canvas.getContext("2d");
               ctx.drawImage(this, 0, 0, imageWidth, imageHeight);
 
-              var paste = canvas.toDataURL(current_file.type);
-              $('#content').val(paste).trigger('change');
-              $('#content').hide();
-              $(image).css('max-width', '742px');
-  			  $('#content').after(image);
+              $(image).css('max-width', '742px').attr('data-generated-content', true);
+              updateContentData(event);
+              $('#content').hide().after(image);
             }
           }
         reader.readAsDataURL(current_file);
+      } else if (current_file.type.indexOf('video/') == 0) {
+        reader.onload = function (event) {
+              var video = $('<video controls/>');
+              video.attr('src', event.target.result);
+              video.css('max-width', '742px');
+              video.attr('data-generated-content', true);
+
+              updateContentData(event);
+              $('#content').hide().after(video);
+        }
+        reader.readAsDataURL(current_file);
+      } else if (current_file.type.indexOf('audio/') == 0) {
+        reader.onload = function (event) {
+              var audio = $('<audio controls/>');
+              audio.attr('src', event.target.result);
+              audio.attr('data-generated-content', true);
+
+              updateContentData(event);
+              $('#content').hide().after(audio);
+        }
+        reader.readAsDataURL(current_file);
       } else {
         reader.onload = function (event) {
-          $('#content').val(event.target.result).trigger('change');
+          if (/[\x00\x08\x0B\x0C\x0E-\x1F]/.test(event.target.result)) {
+            reader.onload = function (binaryEvent) {
+              var binaryIndicator = $('<a />').attr('class', 'btn');
+              binaryIndicator.text(' This type of file cannot be previewed - click here to download it instead');
+              binaryIndicator.attr('href', binaryEvent.target.result)
+              binaryIndicator.attr('target', '_blank');
+              binaryIndicator.attr('download', current_file.name);
+              binaryIndicator.attr('data-generated-content', true);
+              $('<span />').attr('class', 'icon-info-sign').prependTo(binaryIndicator);
+
+              updateContentData(binaryEvent);
+              $('#content').hide().after(binaryIndicator);
+            }
+
+            reader.readAsDataURL(current_file);
+          } else {
+            updateContentData(event);
+            $('#content').show();
+          }
         };
         reader.readAsText(current_file);
       }
@@ -615,9 +657,10 @@
       zerobin.decrypt(key, content,
 
       /* On error*/
-      function () {
+      function (err) {
         bar.container.hide();
         zerobin.message('error', 'Could not decrypt data (Wrong key ?)', 'Error');
+        console.error(err.stack || err);
       },
 
       /* Update progress bar */
@@ -631,24 +674,40 @@
         /* Decrypted content goes back to initial container*/
         $('#paste-content').text(content);
 
-        if (content.indexOf('data:image') == 0) {
-          // Display Image
-          $('#paste-content').hide();
-          var img = $('<img/>');
-          $(img).attr('src', content);
-          $(img).css('max-width', '742px');
-          $('#paste-content').after(img);
+        /* Prepare a download link (as HTML buttons can't trigger downloads). */
+        var downloadLink = $('<a />');
+        downloadLink.attr('id', 'download-link');
+        downloadLink.attr('download', '0bin_' + document.location.pathname.split('/').pop());
+        downloadLink.html($('#download-button').html());
+        downloadLink.attr('class', $('#download-button').attr('class'));
 
-          // Display Download button
+        if (content.indexOf('data:') == 0) {
+          // Disable the clone button.
           $('.btn-clone').hide();
 
-          var button = $('<a/>').attr('href', content);
-          $(button).attr('download', '0bin_' + document.location.pathname.split('/').pop());
-          $(button).addClass('btn');
-          $(button).html('<i class="icon-download"></i> Download');
-          $('.btn-clone').after(button);
+          downloadLink.attr('href', content);
 
+          if (content.indexOf('data:image') == 0) {
+            var img = $('<img/>').attr('src', content).css('max-width', '742px');
+            $('#paste-content').hide().after(img);
+          } else if (content.indexOf('data:video') == 0) {
+            var video = $('<video controls/>').attr('src', content).css('max-width', '742px');
+            $('#paste-content').hide().after(video);
+          } else if (content.indexOf('data:audio') == 0) {
+            var audio = $('<audio controls/>').attr('src', content);
+            $('#paste-content').hide().after(audio);
+          } else {
+            var binaryDownloadLink = downloadLink.clone().attr('id', 'download-binary-link');
+            binaryDownloadLink.text(' This type of file cannot be previewed - click here to download it instead');
+            $('<span />').attr('class', 'icon-info-sign').prependTo(binaryDownloadLink);
+
+            $('#paste-content').hide().after(binaryDownloadLink);
+          }
+        } else {
+           var contentAsPlaintext = new Blob([ content ], { type: 'text/plain' });
+           downloadLink.attr('href', URL.createObjectURL(contentAsPlaintext));
         }
+
         bar.set('Code coloration...', '95%');
 
         /* Add a continuation to let the UI redraw */
@@ -705,7 +764,7 @@
             $('#paste-content').addClass('linenums');
             prettyPrint();
           } else {
-            if (content.indexOf('data:image') != 0) {
+            if ($('#paste-content').is(':visible')) {
               zerobin.message('info',
                 "The paste did not seem to be code, so it " +
                 "was not colorized. " +
@@ -722,6 +781,7 @@
           bar.container.hide();
 
           $form.prop('disabled', false);
+          $('#download-button').replaceWith(downloadLink);
           content = '';
 
         }, 250);
